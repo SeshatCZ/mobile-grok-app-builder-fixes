@@ -1,10 +1,24 @@
+function normalizedEmbedderHost(hostname: string): string {
+  let host = hostname.toLowerCase();
+  // A trailing dot is the same FQDN. Brackets are part of `URL.hostname` for
+  // IPv6 on this runtime and absent on others; `::1` is loopback either way.
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  return host;
+}
+
+function isLoopbackEmbedderHost(hostname: string): boolean {
+  const host = normalizedEmbedderHost(hostname);
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 export function isGrokEmbedderOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
     if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-    const host = url.hostname.toLowerCase();
+    const host = normalizedEmbedderHost(url.hostname);
     if (host === "grok.com" || host.endsWith(".grok.com")) return true;
-    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true;
+    if (isLoopbackEmbedderHost(host)) return true;
     return false;
   } catch {
     return false;
@@ -37,9 +51,7 @@ export function resolveParentEmbedderOrigin(
   if (parentIsSelf) return null;
   for (const candidate of [referrer, ancestorOrigin ?? ""].filter(Boolean)) {
     try {
-      const url = new URL(
-        candidate.includes("://") ? candidate : `https://${candidate}`,
-      );
+      const url = new URL(candidate.includes("://") ? candidate : `https://${candidate}`);
       if (url.protocol !== "https:" && url.protocol !== "http:") continue;
       if (isGrokEmbedderOrigin(url.origin)) return url.origin;
       if (

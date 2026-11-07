@@ -7,7 +7,10 @@
 
 import { z } from "zod";
 import { CONNECTOR_TOKEN_READY_EVENT } from "./app-data/types";
+import { isSafeBridgePath } from "./preview-bridge-path.ts";
 import { resolveParentEmbedderOrigin } from "./preview-embedder-origin";
+
+export { isSafeBridgePath } from "./preview-bridge-path.ts";
 
 export {
   isGrokEmbedderOrigin,
@@ -49,18 +52,6 @@ export type PreviewHostBridgeOptions = {
   getRoutePaths?: () => string[];
 };
 
-export function isSafeBridgePath(path: string): boolean {
-  if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")) {
-    return false;
-  }
-  try {
-    const resolved = new URL(path, "https://preview.invalid");
-    return resolved.origin === "https://preview.invalid";
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Origin of the Grok embedder framing this page, or null when the page runs
  * top-level (download/export, local `npm run dev`, deployed sites) or under a
@@ -69,7 +60,7 @@ export function isSafeBridgePath(path: string): boolean {
 export function resolveCurrentEmbedderOrigin(): string | null {
   if (typeof window === "undefined") return null;
   const ancestorOrigin =
-    typeof location.ancestorOrigins !== 'undefined' && location.ancestorOrigins.length > 0
+    typeof location.ancestorOrigins !== "undefined" && location.ancestorOrigins.length > 0
       ? location.ancestorOrigins[0]
       : null;
   return resolveParentEmbedderOrigin(
@@ -84,9 +75,7 @@ export function resolveCurrentEmbedderOrigin(): string | null {
  * Install host↔guest messaging. Returns a dispose function.
  * Noops (returns a no-op dispose) when not embedded under a Grok parent.
  */
-export function installPreviewHostBridge(
-  options: PreviewHostBridgeOptions = {},
-): () => void {
+export function installPreviewHostBridge(options: PreviewHostBridgeOptions = {}): () => void {
   const parentOrigin = resolveCurrentEmbedderOrigin();
   if (parentOrigin === null) return () => {};
 
@@ -96,9 +85,7 @@ export function installPreviewHostBridge(
 
   const isAtHistoryRoot = () => {
     const state = window.history.state;
-    return Boolean(
-      state && typeof state === "object" && state[ROOT_STATE_KEY] === true,
-    );
+    return Boolean(state && typeof state === "object" && state[ROOT_STATE_KEY] === true);
   };
 
   // Floor for chrome Back: only the first install in a fresh history stack is
@@ -236,21 +223,17 @@ export function installPreviewHostBridge(
 
   // Patch history so in-app SPA navigations sync the host address bar.
   window.history.pushState = (data, unused, url) => {
-    const next =
-      data && typeof data === "object"
-        ? { ...data, [ROOT_STATE_KEY]: false }
-        : data;
+    const next = data && typeof data === "object" ? { ...data, [ROOT_STATE_KEY]: false } : data;
     originalPushState(next, unused, url);
     reportLocation();
   };
   window.history.replaceState = (data, unused, url) => {
-    const next =
-      isAtHistoryRoot()
-        ? {
-            ...(data && typeof data === "object" ? data : {}),
-            [ROOT_STATE_KEY]: true,
-          }
-        : data;
+    const next = isAtHistoryRoot()
+      ? {
+          ...(data && typeof data === "object" ? data : {}),
+          [ROOT_STATE_KEY]: true,
+        }
+      : data;
     originalReplaceState(next, unused, url);
     reportLocation();
   };

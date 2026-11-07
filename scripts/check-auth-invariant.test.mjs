@@ -43,6 +43,10 @@ test("a server started without the flag reads as sign-in on", async () => {
   assert.equal(await probeDevAuthEnabled("http://127.0.0.1:8080", appEnvFetch({})), true);
 });
 
+test("a JSON array is not a resolved env, so the probe stays indeterminate", async () => {
+  assert.equal(await probeDevAuthEnabled("http://127.0.0.1:8080", appEnvFetch([])), null);
+});
+
 test("agreement passes", () => {
   assert.equal(
     compareAuthInvariant({ devAuthEnabled: false, buildAuthEnabled: false }).status,

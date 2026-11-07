@@ -11,6 +11,7 @@ import {
   injectGrokPwaHead,
   isDocumentPath,
   isInstallQuery,
+  hostnameFromHostHeader,
   publicAppHost,
   renderWebManifest,
   resolveOgCardAsset,
@@ -492,6 +493,16 @@ test("names the install page from host slug", () => {
 test("rejects hosts that are not plain slugs", () => {
   assert.equal(appNameFromHost("<script>alert(1)</script>"), "Grok App");
   assert.equal(appNameFromHost('"><img src=x onerror=1>.grok.me'), "Grok App");
+});
+
+test("host headers keep IPv6 intact instead of splitting on the first colon", () => {
+  assert.equal(hostnameFromHostHeader("[::1]:8080"), "::1");
+  assert.equal(hostnameFromHostHeader("[::1]"), "::1");
+  assert.equal(hostnameFromHostHeader("wild-race.grok.me:443"), "wild-race.grok.me");
+  assert.equal(hostnameFromHostHeader("wild-race.grok.me, evil.example"), "wild-race.grok.me");
+  assert.equal(publicAppHost("[::1]:8080"), "");
+  assert.equal(publicAppHost("wild-race.grok.me:443"), "wild-race.grok.me");
+  assert.equal(appNameFromHost("[::1]:8080"), "Grok App");
 });
 
 test("renders install page markup", () => {

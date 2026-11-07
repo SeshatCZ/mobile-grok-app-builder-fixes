@@ -10,6 +10,7 @@ import type { ToolArgs } from "./types.ts";
 import { isLoginRequired, redirectToLoginIfRequired } from "./login.ts";
 import { classifyCallToolError } from "./errors.ts";
 import type { CallToolResult } from "./types.ts";
+import { isLoopbackHost } from "./client.server.ts";
 
 type WindowStub = {
   location: { assign: (url: string) => void; href: string };
@@ -391,6 +392,17 @@ describe("redirectToLoginIfRequired", () => {
       loginUrl: "https://gate.grok.me/__gate/signin?return_to=x",
     });
     assert.equal(did, false);
+  });
+});
+
+describe("isLoopbackHost", () => {
+  it("recognizes IPv6 loopback with or without brackets", () => {
+    assert.equal(isLoopbackHost("::1"), true);
+    assert.equal(isLoopbackHost("[::1]"), true);
+    assert.equal(isLoopbackHost("["), false);
+    assert.equal(isLoopbackHost("127.0.0.1"), true);
+    assert.equal(isLoopbackHost("localhost"), true);
+    assert.equal(isLoopbackHost("wild-race.grok.me"), false);
   });
 });
 

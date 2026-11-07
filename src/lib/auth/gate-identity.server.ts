@@ -4,6 +4,7 @@ import {
   type JWK,
   type JWTVerifyGetKey,
 } from "jose";
+import { hostnameFromHostHeader } from "../../../scripts/grok-pwa-shared.mjs";
 import { env, isWorkspacePreview } from "../env.server.ts";
 
 export const GATE_IDENTITY_HEADER = "x-grok-identity";
@@ -136,11 +137,9 @@ export function resolveGateEndpoints(headers: Headers): GateEndpoints | null {
     };
   }
 
-  const xf = headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const host = (xf || headers.get("host") || "")
-    .split(":")[0]
-    ?.trim()
-    .toLowerCase();
+  const host = hostnameFromHostHeader(
+    headers.get("x-forwarded-host") || headers.get("host") || "",
+  );
   if (!host) return null;
 
   let issuer: string | null = null;

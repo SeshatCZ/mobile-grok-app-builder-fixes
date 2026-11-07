@@ -63,7 +63,9 @@ function placeholderCardColor(site = {}) {
  * way (`URL.hostname` is `[::1]` on this runtime and `::1` on others).
  */
 export function hostnameFromHostHeader(hostHeader) {
-  const first = String(hostHeader ?? "").split(",")[0].trim();
+  const first = String(hostHeader ?? "")
+    .split(",")[0]
+    .trim();
   if (!first) return "";
   try {
     const hostname = new URL(`http://${first}`).hostname.toLowerCase();
@@ -125,16 +127,23 @@ export function publicAppHost(hostHeader) {
  * app — Envoy rewrites it to `*.vercel.app`.
  */
 export function resolvePublicHost(hostHeader) {
-  return (
-    publicAppHost(process.env?.VITE_PUBLIC_HOSTNAME) || publicAppHost(hostHeader)
-  );
+  return publicAppHost(process.env?.VITE_PUBLIC_HOSTNAME) || publicAppHost(hostHeader);
+}
+
+function parseAppUrl(url) {
+  const raw = String(url ?? "");
+  try {
+    return new URL(raw || "/", "https://preview.invalid");
+  } catch {
+    return null;
+  }
 }
 
 export function isInstallQuery(url) {
-  const query = String(url ?? "").split("?", 2)[1] ?? "";
-  const params = new URLSearchParams(query);
-  const install = params.get("install");
-  const platform = (params.get("platform") ?? "").toLowerCase();
+  const parsed = parseAppUrl(url);
+  if (!parsed) return false;
+  const install = parsed.searchParams.get("install");
+  const platform = (parsed.searchParams.get("platform") ?? "").toLowerCase();
   return (install === "1" || install === "true") && platform === "ios";
 }
 
@@ -157,12 +166,16 @@ export function acceptsHtml(accept) {
 
 /** The same URL without the install-tutorial params (used as the app link). */
 export function stripInstallParams(url) {
-  const [path = "/", query = ""] = String(url ?? "/").split("?", 2);
-  const params = new URLSearchParams(query);
-  params.delete("install");
-  params.delete("platform");
-  const rest = params.toString();
-  return rest ? `${path}?${rest}` : path;
+  const raw = String(url ?? "/");
+  const parsed = parseAppUrl(raw);
+  if (!parsed) return "/";
+  parsed.searchParams.delete("install");
+  parsed.searchParams.delete("platform");
+  const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  // Absolute inputs keep their origin. A fragment must survive: splitting on
+  // "?" glued `#add` onto `platform=ios` and then threw the hash away.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return `${parsed.origin}${path}`;
+  return path || "/";
 }
 
 export function renderInstallPageHtml(template, { host, url } = {}) {
@@ -343,7 +356,10 @@ export function siteHasCustomCard(site = {}) {
  * Otherwise empty — caller emits the og.grok.me placeholder.
  */
 export function resolveOgCardAsset(site = {}, cwd = process.cwd()) {
-  return ogCardPublicPath(cwd) || (detectCustomOgCard(cwd, site) ? String(site.image ?? "").trim() || "/og.jpg" : "");
+  return (
+    ogCardPublicPath(cwd) ||
+    (detectCustomOgCard(cwd, site) ? String(site.image ?? "").trim() || "/og.jpg" : "")
+  );
 }
 
 /** Stamp `card=custom` when public/og.jpg or public/og.png is on disk. */
@@ -453,12 +469,7 @@ export function injectGrokPwaHead(html, ctx = {}) {
   if (typeof html !== "string") return html;
   const { site, projectId, creator, creatorId, host, cwd } = normalizeHeadContext(ctx);
   const documentTitle = titleFromDocument(html);
-  const appName = resolveOgTitle(
-    site,
-    ctx.appName ?? DEFAULT_APP_NAME,
-    host,
-    documentTitle,
-  );
+  const appName = resolveOgTitle(site, ctx.appName ?? DEFAULT_APP_NAME, host, documentTitle);
   let next = stripShareMetaTags(html);
   if (!readGrokExtensionsEnabled()) next = stripGrokExtensionsScript(next);
 

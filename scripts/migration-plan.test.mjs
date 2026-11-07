@@ -38,6 +38,19 @@ test("a file already applied from another directory does not re-apply", () => {
   assert.deepEqual(pendingMigrations(["/migrations/0001_auth.sql"], ["0001_auth.sql"]), []);
 });
 
+test("the same basename is one migration, and the shallower path wins", () => {
+  assert.deepEqual(
+    pendingMigrations(
+      ["migrations/auth/0001_auth.sql", "/migrations/0001_auth.sql", "/migrations/0002_b.sql"],
+      [],
+    ),
+    [
+      { name: "0001_auth.sql", path: "/migrations/0001_auth.sql" },
+      { name: "0002_b.sql", path: "/migrations/0002_b.sql" },
+    ],
+  );
+});
+
 test("pending migrations are returned in name order", () => {
   assert.deepEqual(
     pendingMigrations(

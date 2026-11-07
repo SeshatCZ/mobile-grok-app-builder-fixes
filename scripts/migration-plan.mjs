@@ -30,17 +30,45 @@ export function isMigrationFile(path) {
 }
 
 /**
+ * @param {string} path
+ * @returns {number}
+ */
+function pathDepth(path) {
+  return path.split("/").filter(Boolean).length;
+}
+
+/**
  * Migrations in `paths` that are not yet in `applied`, in apply order.
  * Non-`.sql` entries (a `readdir` also yields `migrations/auth/`) are dropped.
+ * Two paths with the same basename are one migration: applying both would
+ * insert the same `_migrations` key twice and abort the pass. The shallower
+ * path wins — that is the copy promoted into the globbed directory.
+ * Order is code-point order, not `localeCompare`, so a different OS locale
+ * cannot apply the same set in a different sequence.
  * @param {Iterable<string>} paths
  * @param {Iterable<string>} applied
  * @returns {Array<{ name: string, path: string }>}
  */
 export function pendingMigrations(paths, applied) {
   const done = new Set(applied);
-  return [...paths]
+  const sorted = [...paths]
     .filter(isMigrationFile)
     .map((path) => ({ name: migrationName(path), path }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .filter(({ name }) => !done.has(name));
+    .sort((a, b) => {
+      if (a.name < b.name) return -1;
+      if (a.name > b.name) return 1;
+      const byDepth = pathDepth(a.path) - pathDepth(b.path);
+      if (byDepth !== 0) return byDepth;
+      if (a.path < b.path) return -1;
+      if (a.path > b.path) return 1;
+      return 0;
+    });
+  const seen = new Set();
+  const pending = [];
+  for (const item of sorted) {
+    if (done.has(item.name) || seen.has(item.name)) continue;
+    seen.add(item.name);
+    pending.push(item);
+  }
+  return pending;
 }

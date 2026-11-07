@@ -11,6 +11,7 @@ import {
   injectGrokPwaHead,
   isDocumentPath,
   isInstallQuery,
+  acceptsHtml,
   publicAppHost,
   renderWebManifest,
   resolveOgCardAsset,
@@ -487,6 +488,16 @@ test("strips install params from the app link", () => {
     stripInstallParams("https://wild-race.grok.me/app?install=1&platform=ios#x"),
     "https://wild-race.grok.me/app#x",
   );
+});
+
+test("honors an Accept quality of zero", () => {
+  assert.equal(acceptsHtml(""), true);
+  assert.equal(acceptsHtml("text/html"), true);
+  assert.equal(acceptsHtml("*/*"), true);
+  assert.equal(acceptsHtml("application/json"), false);
+  assert.equal(acceptsHtml("text/html;q=0"), false);
+  assert.equal(acceptsHtml("text/htmlfoo"), false);
+  assert.equal(acceptsHtml("text/html;q=0, */*;q=0.1"), true);
 });
 
 test("names the install page from host slug", () => {

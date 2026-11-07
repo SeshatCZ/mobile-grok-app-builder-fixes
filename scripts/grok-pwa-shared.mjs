@@ -160,8 +160,27 @@ export function isDocumentPath(pathname) {
 }
 
 export function acceptsHtml(accept) {
-  const value = String(accept ?? "");
-  return value === "" || value.includes("text/html") || value.includes("*/*");
+  const value = String(accept ?? "").trim();
+  if (value === "") return true;
+  let best = 0;
+  let matched = false;
+  for (const part of value.split(",")) {
+    const [media, ...params] = part.split(";").map((piece) => piece.trim());
+    if (!media) continue;
+    let q = 1;
+    for (const param of params) {
+      const match = /^q\s*=\s*([0-9]*\.?[0-9]+)$/i.exec(param);
+      if (!match) continue;
+      const parsed = Number(match[1]);
+      if (Number.isFinite(parsed)) q = parsed;
+    }
+    const type = media.toLowerCase();
+    if (type !== "*/*" && type !== "text/*" && type !== "text/html") continue;
+    matched = true;
+    if (q > best) best = q;
+  }
+  // `text/html` as a substring used to accept `text/html;q=0` and `text/htmlfoo`.
+  return matched && best > 0;
 }
 
 /** The same URL without the install-tutorial params (used as the app link). */

@@ -12,7 +12,7 @@
  * copying would have to land its temp in the target's directory, which is the
  * one thing a staged path is not allowed to do.
  */
-import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -46,6 +46,23 @@ export function stagingError({ staged, target, publicDir }) {
 }
 
 /**
+ * Directories that do not exist yet, deepest first. `mkdir -p` creates them;
+ * on a failed rename we delete the highest new ancestor so a refused hand-over
+ * does not leave a half-built `src/lib/og/` behind.
+ */
+function missingAncestors(dir) {
+  const missing = [];
+  let current = dir;
+  while (!existsSync(current)) {
+    missing.push(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return missing;
+}
+
+/**
  * Moves `staged` onto `target`, leaving `target` untouched if anything fails.
  * `rename` is injectable because EXDEV — the refusal the "stage under
  * /workspace/.grok/" contract rests on — cannot be provoked portably.
@@ -54,10 +71,15 @@ export function handOver(staged, target, { rename = renameSync } = {}) {
   if (!existsSync(staged)) {
     throw Object.assign(new Error(`staged file is missing: ${staged}`), { code: "ENOENT" });
   }
-  mkdirSync(dirname(target), { recursive: true });
+  const dir = dirname(target);
+  const created = missingAncestors(dir);
+  for (const d of [...created].reverse()) mkdirSync(d);
   try {
     rename(staged, target);
   } catch (err) {
+    if (created.length > 0) {
+      rmSync(created[created.length - 1], { recursive: true, force: true });
+    }
     if (err?.code === "EXDEV") {
       throw new Error(
         `${staged} is on another filesystem than ${target}, so the hand-over cannot be a `

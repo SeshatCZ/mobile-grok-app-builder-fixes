@@ -7,6 +7,7 @@ import {
 } from "../auth/isolation.server.ts";
 import { env, isWorkspacePreview } from "../env.server.ts";
 import { assertAppDataServerOnly } from "./server-only.ts";
+import { isTrustedGateLoginUrl } from "./login.ts";
 import {
   CONNECTOR_TOKEN_HEADER,
   CONNECTOR_TOKEN_PENDING_CODE,
@@ -22,7 +23,8 @@ export const CONNECTORS_HOST_STAGING = "connectors.app-builder-testing.com";
 export const CONNECTORS_HOST_PROD = "connectors.grok.me";
 
 export function isLoopbackHost(host: string): boolean {
-  const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const bare =
+    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   return bare === "localhost" || bare === "127.0.0.1" || bare === "::1";
 }
 
@@ -232,11 +234,12 @@ function unauthorizedResult(
     noteTokenRejected(token);
     return pendingTokenResult(PENDING_TOKEN_REJECTED);
   }
-  const loginUrl =
-    gateSigninUrl(ctx) ??
-    (typeof json.loginUrl === "string" && json.loginUrl
-      ? json.loginUrl
-      : undefined);
+  const fromGate = gateSigninUrl(ctx);
+  const fromJson = typeof json.loginUrl === "string" ? json.loginUrl : undefined;
+  const loginUrl = [fromGate, fromJson].find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && isTrustedGateLoginUrl(candidate),
+  );
   return {
     ok: false,
     data: null,

@@ -84,6 +84,91 @@ function serveGrokPwa(middlewares) {
  * content-encoded: under `vite preview` the compression middleware can hand
  * this wrapper gzipped bytes, which must pass through untouched.
  */
+/**
+ * Node's `res.write` / `res.end` overload a trailing function as the callback
+ * (`res.end(cb)`, `res.write(chunk, cb)`). Treating that function as a body
+ * makes `Buffer.from` throw and abort the response. A returned `false` is
+ * backpressure and must surface — always returning `true` fills the socket
+ * buffer with no drain.
+ */
+export function normalizeHttpBodyArgs(chunk, encoding, cb) {
+  if (typeof chunk === "function") {
+    return { chunk: undefined, encoding: undefined, cb: chunk };
+  }
+  if (typeof encoding === "function") {
+    return { chunk, encoding: undefined, cb: encoding };
+  }
+  return { chunk, encoding, cb: typeof cb === "function" ? cb : undefined };
+}
+
+function emitChunks(originalWrite, chunks, cb) {
+  if (chunks.length === 0) {
+    if (cb) cb();
+    return true;
+  }
+  let ok = true;
+  for (let i = 0; i < chunks.length; i += 1) {
+    const last = i === chunks.length - 1;
+    const written = originalWrite(chunks[i], undefined, last ? cb : undefined);
+    if (written === false) ok = false;
+  }
+  return ok;
+}
+
+/**
+ * Patch `res.write` / `res.end` so HTML is rewritten at `</head>` while the
+ * rest of the body streams. `decideMode` reads response headers and may flip
+ * the stream to passthrough (already compressed, not HTML).
+ */
+export function installStreamingHeadInjection(res, injector) {
+  const originalWrite = res.write.bind(res);
+  const originalEnd = res.end.bind(res);
+  let mode = null; // null = undecided, "inject" | "passthrough"
+
+  const decideMode = () => {
+    if (mode) return mode;
+    const isHtml = String(res.getHeader("content-type") ?? "").includes("text/html");
+    const encoded = Boolean(res.getHeader("content-encoding"));
+    mode = isHtml && !encoded ? "inject" : "passthrough";
+    // Streaming SSR flushes headers before the first body chunk, so the
+    // header may no longer be removable — chunked responses don't carry one.
+    if (mode === "inject" && !res.headersSent) res.removeHeader("content-length");
+    return mode;
+  };
+
+  const toBuffer = (chunk, encoding) => {
+    if (Buffer.isBuffer(chunk)) return chunk;
+    if (typeof chunk === "string") {
+      return Buffer.from(chunk, typeof encoding === "string" ? encoding : "utf8");
+    }
+    return Buffer.from(chunk);
+  };
+
+  res.write = (chunk, encoding, cb) => {
+    const args = normalizeHttpBodyArgs(chunk, encoding, cb);
+    if (decideMode() === "passthrough") {
+      return originalWrite(args.chunk, args.encoding, args.cb);
+    }
+    const chunks =
+      args.chunk == null
+        ? []
+        : injector.push(toBuffer(args.chunk, args.encoding));
+    return emitChunks(originalWrite, chunks, args.cb);
+  };
+
+  res.end = (chunk, encoding, cb) => {
+    const args = normalizeHttpBodyArgs(chunk, encoding, cb);
+    if (decideMode() === "passthrough") {
+      return originalEnd(args.chunk, args.encoding, args.cb);
+    }
+    if (args.chunk != null) {
+      for (const out of injector.push(toBuffer(args.chunk, args.encoding))) originalWrite(out);
+    }
+    for (const out of injector.flush()) originalWrite(out);
+    return originalEnd(undefined, undefined, args.cb);
+  };
+}
+
 function wrapHtmlResponses(middlewares, cwd) {
   middlewares.use((req, res, next) => {
     const rawUrl = req.url ?? "";
@@ -99,54 +184,8 @@ function wrapHtmlResponses(middlewares, cwd) {
       return;
     }
 
-    const originalWrite = res.write.bind(res);
-    const originalEnd = res.end.bind(res);
     const host = requestHost(req);
-    const injector = createHeadInjector({
-      host,
-      cwd,
-    });
-    let mode = null; // null = undecided, "inject" | "passthrough"
-
-    const decideMode = () => {
-      if (mode) return mode;
-      const isHtml = String(res.getHeader("content-type") ?? "").includes("text/html");
-      const encoded = Boolean(res.getHeader("content-encoding"));
-      mode = isHtml && !encoded ? "inject" : "passthrough";
-      // Streaming SSR flushes headers before the first body chunk, so the
-      // header may no longer be removable — chunked responses don't carry one.
-      if (mode === "inject" && !res.headersSent) res.removeHeader("content-length");
-      return mode;
-    };
-
-    const toBuffer = (chunk, encoding) => {
-      if (Buffer.isBuffer(chunk)) return chunk;
-      if (typeof chunk === "string") {
-        return Buffer.from(chunk, typeof encoding === "string" ? encoding : "utf8");
-      }
-      return Buffer.from(chunk);
-    };
-
-    res.write = (chunk, encoding, cb) => {
-      if (decideMode() === "passthrough") return originalWrite(chunk, encoding, cb);
-      const done = typeof encoding === "function" ? encoding : cb;
-      if (chunk) {
-        for (const out of injector.push(toBuffer(chunk, encoding))) originalWrite(out);
-      }
-      if (typeof done === "function") done();
-      return true;
-    };
-
-    res.end = (chunk, encoding, cb) => {
-      const done = typeof encoding === "function" ? encoding : cb;
-      if (decideMode() === "passthrough") return originalEnd(chunk, encoding, cb);
-      if (chunk) {
-        for (const out of injector.push(toBuffer(chunk, encoding))) originalWrite(out);
-      }
-      for (const out of injector.flush()) originalWrite(out);
-      return originalEnd(undefined, undefined, done);
-    };
-
+    installStreamingHeadInjection(res, createHeadInjector({ host, cwd }));
     next();
   });
 }

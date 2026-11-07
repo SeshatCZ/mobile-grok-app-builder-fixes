@@ -1,0 +1,4 @@
+node_modules
+artifacts
+.grok
+.node_modules.lock

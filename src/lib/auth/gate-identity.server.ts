@@ -1,9 +1,4 @@
-import {
-  importJWK,
-  jwtVerify,
-  type JWK,
-  type JWTVerifyGetKey,
-} from "jose";
+import { importJWK, jwtVerify, type JWK, type JWTVerifyGetKey } from "jose";
 import { hostnameFromHostHeader } from "../../../scripts/grok-pwa-shared.mjs";
 import { env, isWorkspacePreview } from "../env.server.ts";
 
@@ -57,13 +52,9 @@ export function gateKeyResolver(
   jwksFetch: JwksFetch = defaultJwksFetch,
 ): JWTVerifyGetKey {
   return async (protectedHeader) => {
-    const kid =
-      typeof protectedHeader.kid === "string" ? protectedHeader.kid : undefined;
+    const kid = typeof protectedHeader.kid === "string" ? protectedHeader.kid : undefined;
     const findKey = (jwks: GateJwks): JWK | undefined =>
-      jwks.keys.find(
-        (k) =>
-          k.kty === "OKP" && k.crv === "Ed25519" && (!kid || k.kid === kid),
-      );
+      jwks.keys.find((k) => k.kty === "OKP" && k.crv === "Ed25519" && (!kid || k.kid === kid));
 
     let entry = jwksCache.get(url);
     if (!entry || Date.now() - entry.fetchedAt > JWKS_CACHE_TTL_MS) {
@@ -137,16 +128,11 @@ export function resolveGateEndpoints(headers: Headers): GateEndpoints | null {
     };
   }
 
-  const host = hostnameFromHostHeader(
-    headers.get("x-forwarded-host") || headers.get("host") || "",
-  );
+  const host = hostnameFromHostHeader(headers.get("x-forwarded-host") || headers.get("host") || "");
   if (!host) return null;
 
   let issuer: string | null = null;
-  if (
-    host === "app-builder-testing.com" ||
-    host.endsWith(".app-builder-testing.com")
-  ) {
+  if (host === "app-builder-testing.com" || host.endsWith(".app-builder-testing.com")) {
     issuer = "https://gate.app-builder-testing.com";
   } else if (host === "grok.me" || host.endsWith(".grok.me")) {
     issuer = "https://gate.grok.me";
@@ -164,9 +150,7 @@ export function sessionBoundToGateIdentity(
   gateProviderId: string,
 ): boolean {
   return accounts.some(
-    (account) =>
-      account.providerId === gateProviderId &&
-      account.accountId === identitySub,
+    (account) => account.providerId === gateProviderId && account.accountId === identitySub,
   );
 }
 
@@ -193,13 +177,27 @@ export type GateUserInfo = {
   name: string;
 };
 
+const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+
+function usableGateEmail(email: string | null): string | null {
+  if (typeof email !== "string") return null;
+  const trimmed = email.trim();
+  // A blank, a control character, or a non-address must not be stored as a
+  // verified email — a CR/LF in the claim is a header injection, and "" is
+  // not the same as "no email" for the `??` fallback.
+  if (!trimmed || CONTROL_CHARS.test(trimmed) || !EMAIL_ADDRESS.test(trimmed)) {
+    return null;
+  }
+  return trimmed.toLowerCase();
+}
+
 export function gateIdentityUserInfo(identity: GateIdentity): GateUserInfo {
+  const email = usableGateEmail(identity.email);
   return {
     id: identity.sub,
-    email: (
-      identity.email ?? `${identity.sub}@${FALLBACK_EMAIL_DOMAIN}`
-    ).toLowerCase(),
-    emailVerified: Boolean(identity.email),
-    name: identity.name ?? FALLBACK_NAME,
+    email: email ?? `${identity.sub.trim().toLowerCase()}@${FALLBACK_EMAIL_DOMAIN}`,
+    emailVerified: email !== null,
+    name: identity.name?.trim() ? identity.name.trim() : FALLBACK_NAME,
   };
 }

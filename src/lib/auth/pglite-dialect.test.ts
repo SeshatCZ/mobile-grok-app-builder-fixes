@@ -36,6 +36,40 @@ describe("LazyPGliteDriver checkout", () => {
     return pgliteDialect(getClient as never).createDriver();
   }
 
+  const client = { async query() { return { rows: [] as [] }; } };
+
+  it("does not hand out two connections when getClient is still in flight", async () => {
+    let release!: (value: typeof client) => void;
+    const pending = new Promise<typeof client>((resolve) => {
+      release = resolve;
+    });
+    const driver = driverFor(() => pending);
+    const first = driver.acquireConnection();
+    const second = driver.acquireConnection();
+    release(client);
+    const a = await first;
+    let secondSettled = false;
+    const secondDone = second.then((conn) => {
+      secondSettled = true;
+      return conn;
+    });
+    await Promise.resolve();
+    assert.equal(secondSettled, false);
+    await driver.releaseConnection(a);
+    const b = await secondDone;
+    assert.equal(a, b);
+    await driver.releaseConnection(b);
+  });
+
+  it("rejects waiters when the driver is destroyed", async () => {
+    const driver = driverFor(async () => client);
+    const held = await driver.acquireConnection();
+    const waiting = driver.acquireConnection();
+    await driver.destroy();
+    await assert.rejects(waiting, /destroyed/);
+    await assert.rejects(driver.releaseConnection(held), /Invalid connection/);
+  });
+
   it("maps a zero-row update through executeQuery", async () => {
     const updating = {
       async query() {

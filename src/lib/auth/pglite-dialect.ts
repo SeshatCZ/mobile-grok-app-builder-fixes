@@ -75,6 +75,9 @@ class LazyPGliteDriver implements Driver {
   private client: Client | undefined;
   private connection: PGliteConnection | undefined;
   private queue: Waiter[] = [];
+  private destroyed = false;
+  /** Serializes check-and-set. Must not await a queued checkout (that deadlocks release). */
+  private tail: Promise<void> = Promise.resolve();
 
   private readonly getClient: () => Promise<Client> | Client;
 
@@ -82,41 +85,73 @@ class LazyPGliteDriver implements Driver {
     this.getClient = getClient;
   }
 
+  private exclusive<T>(fn: () => Promise<T> | T): Promise<T> {
+    const run = this.tail.then(fn);
+    this.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   async init(): Promise<void> {
-    if (this.client !== undefined) return;
-    this.client = await this.getClient();
+    await this.exclusive(async () => {
+      if (this.destroyed || this.client !== undefined) return;
+      this.client = await this.getClient();
+    });
   }
 
   async acquireConnection(): Promise<DatabaseConnection> {
-    if (this.client === undefined) {
-      this.client = await this.getClient();
-    }
-    if (this.connection !== undefined) {
-      return new Promise<DatabaseConnection>((resolve, reject) => {
+    // The box is a plain object so `exclusive` settles when the slot is
+    // reserved, not when the previous holder releases. Returning the waiter
+    // promise itself would pin the mutex until release — and release needs
+    // the same mutex.
+    const boxed = await this.exclusive(async (): Promise<AcquireBox> => {
+      if (this.destroyed) throw new Error("PGLite driver is destroyed");
+      if (this.client === undefined) {
+        this.client = await this.getClient();
+      }
+      if (this.destroyed) throw new Error("PGLite driver is destroyed");
+      if (this.connection !== undefined) {
+        let resolve!: Waiter["resolve"];
+        let reject!: Waiter["reject"];
+        const wait = new Promise<DatabaseConnection>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
         this.queue.push({ resolve, reject });
-      });
-    }
-    this.connection = new PGliteConnection(this.client);
-    return this.connection;
+        return { kind: "wait", wait };
+      }
+      this.connection = new PGliteConnection(this.client);
+      return { kind: "conn", conn: this.connection };
+    });
+    return boxed.kind === "conn" ? boxed.conn : boxed.wait;
   }
 
   async releaseConnection(connection: DatabaseConnection): Promise<void> {
-    if (connection !== this.connection) {
-      throw new Error("Invalid connection");
-    }
-    const next = this.queue.shift();
-    if (next === undefined) {
-      this.connection = undefined;
-      return;
-    }
-    next.resolve(this.connection);
+    await this.exclusive(() => {
+      if (connection !== this.connection) {
+        throw new Error("Invalid connection");
+      }
+      const next = this.queue.shift();
+      if (next === undefined) {
+        this.connection = undefined;
+        return;
+      }
+      next.resolve(this.connection);
+    });
   }
 
-  async beginTransaction(conn: DatabaseConnection, settings: TransactionSettings): Promise<void> {
+  async beginTransaction(
+    conn: DatabaseConnection,
+    settings: TransactionSettings,
+  ): Promise<void> {
     const c = conn as PGliteConnection;
     if (settings.isolationLevel) {
       await c.executeQuery(
-        CompiledQuery.raw(`start transaction isolation level ${settings.isolationLevel}`),
+        CompiledQuery.raw(
+          `start transaction isolation level ${settings.isolationLevel}`,
+        ),
       );
     } else {
       await c.executeQuery(CompiledQuery.raw("begin"));
@@ -128,17 +163,25 @@ class LazyPGliteDriver implements Driver {
   }
 
   async rollbackTransaction(conn: DatabaseConnection): Promise<void> {
-    await (conn as PGliteConnection).executeQuery(CompiledQuery.raw("rollback"));
+    await (conn as PGliteConnection).executeQuery(
+      CompiledQuery.raw("rollback"),
+    );
   }
 
   async destroy(): Promise<void> {
-    // Do not close the client: it is the shared getPglite() singleton used by
-    // app SQL (getSql). Only drop our local handle so auth teardown cannot
-    // poison the rest of the process. Queued acquirers are still dropped here;
-    // the next commit rejects them instead of abandoning the promises.
-    this.client = undefined;
-    this.connection = undefined;
-    this.queue = [];
+    await this.exclusive(() => {
+      // Do not close the client: it is the shared getPglite() singleton used by
+      // app SQL (getSql). Only drop our local handle so auth teardown cannot
+      // poison the rest of the process. Queued acquirers must reject — dropping
+      // the array left those promises pending forever.
+      this.destroyed = true;
+      this.client = undefined;
+      this.connection = undefined;
+      const queued = this.queue.splice(0);
+      for (const waiter of queued) {
+        waiter.reject(new Error("PGLite driver is destroyed"));
+      }
+    });
   }
 }
 

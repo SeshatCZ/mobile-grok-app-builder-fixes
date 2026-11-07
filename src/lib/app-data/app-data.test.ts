@@ -7,9 +7,10 @@ import {
 } from "./client.server.ts";
 import { ConnectorType, GoogleCalendarTools } from "./types.ts";
 import type { ToolArgs } from "./types.ts";
-import { isLoginRequired, redirectToLoginIfRequired } from "./login.ts";
+import { isLoginRequired, isTrustedGateLoginUrl, redirectToLoginIfRequired } from "./login.ts";
 import { classifyCallToolError } from "./errors.ts";
 import type { CallToolResult } from "./types.ts";
+import { isLoopbackHost } from "./client.server.ts";
 
 type WindowStub = {
   location: { assign: (url: string) => void; href: string };
@@ -391,6 +392,55 @@ describe("redirectToLoginIfRequired", () => {
       loginUrl: "https://gate.grok.me/__gate/signin?return_to=x",
     });
     assert.equal(did, false);
+  });
+
+  it("refuses login URLs that are not the gate sign-in page", () => {
+    const evil = [
+      "javascript:alert(1)",
+      "https://evil.example/__gate/signin",
+      "https://gate.grok.me.evil.example/__gate/signin",
+      "https://user@gate.grok.me/__gate/signin",
+      "https://gate.grok.me/phish",
+      "http://gate.grok.me/__gate/signin",
+    ];
+    for (const loginUrl of evil) {
+      assert.equal(isTrustedGateLoginUrl(loginUrl), false, loginUrl);
+      let target = "";
+      const did = withWindow(
+        {
+          location: {
+            assign: (u) => {
+              target = u;
+            },
+            href: "https://my-app.grok.me/current",
+          },
+        },
+        () =>
+          redirectToLoginIfRequired({
+            ok: false,
+            data: null,
+            loginRequired: true,
+            loginUrl,
+          }),
+      );
+      assert.equal(did, false, loginUrl);
+      assert.equal(target, "", loginUrl);
+    }
+    assert.equal(
+      isTrustedGateLoginUrl("http://127.0.0.1:6014/__gate/signin"),
+      true,
+    );
+  });
+});
+
+describe("isLoopbackHost", () => {
+  it("recognizes IPv6 loopback with or without brackets", () => {
+    assert.equal(isLoopbackHost("::1"), true);
+    assert.equal(isLoopbackHost("[::1]"), true);
+    assert.equal(isLoopbackHost("["), false);
+    assert.equal(isLoopbackHost("127.0.0.1"), true);
+    assert.equal(isLoopbackHost("localhost"), true);
+    assert.equal(isLoopbackHost("wild-race.grok.me"), false);
   });
 });
 

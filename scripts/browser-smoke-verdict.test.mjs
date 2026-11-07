@@ -52,6 +52,14 @@ test("body text prefix is normalized and capped", () => {
   assert.equal(bodyTextPrefix("x".repeat(200)).length, 64);
 });
 
+test("a viewport present in the baseline but missing now diverges", () => {
+  const current = { viewports: { desktop: viewport() } };
+  const baseline = verdict();
+  const { divergesFromBaseline, reasons } = compareToBaseline(current, baseline);
+  assert.equal(divergesFromBaseline, true);
+  assert.match(reasons.join(";"), /mobile: viewport disappeared from the current verdict/);
+});
+
 test("identical runs do not diverge", () => {
   const { divergesFromBaseline, reasons } = compareToBaseline(verdict(), verdict());
   assert.equal(divergesFromBaseline, false);

@@ -55,16 +55,34 @@ function placeholderCardColor(site = {}) {
 }
 
 /**
+ * Hostname from a `Host` / `X-Forwarded-Host` value.
+ *
+ * Splitting on the first colon treats `[::1]:8080` as `"["` and then forwards
+ * that garbage as the public host. The WHATWG parser already knows a port from
+ * an IPv6 address. Brackets are stripped so callers can compare `::1` either
+ * way (`URL.hostname` is `[::1]` on this runtime and `::1` on others).
+ */
+export function hostnameFromHostHeader(hostHeader) {
+  const first = String(hostHeader ?? "").split(",")[0].trim();
+  if (!first) return "";
+  try {
+    const hostname = new URL(`http://${first}`).hostname.toLowerCase();
+    if (hostname.startsWith("[") && hostname.endsWith("]")) {
+      return hostname.slice(1, -1);
+    }
+    return hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * "wild-race.grok.me" → "Wild Race". Only published app hosts encode the
  * display name in the first label. Preview / guest hosts are image origins
  * only — slugifying them produced internal names like "Hds Abc 3000 Xy".
  */
 export function appNameFromHost(hostHeader) {
-  const host = String(hostHeader ?? "")
-    .split(",")[0]
-    .trim()
-    .split(":")[0]
-    .toLowerCase();
+  const host = hostnameFromHostHeader(hostHeader);
   if (!host.endsWith(".grok.me")) {
     return DEFAULT_APP_NAME;
   }
@@ -93,11 +111,7 @@ function isVercelSystemHost(host) {
 
 /** Hostname suitable for absolute og:image URLs. Preview guests (X-Forwarded-Host) are allowed. */
 export function publicAppHost(hostHeader) {
-  const host = String(hostHeader ?? "")
-    .split(",")[0]
-    .trim()
-    .split(":")[0]
-    .toLowerCase();
+  const host = hostnameFromHostHeader(hostHeader);
   if (!host || !/^[a-z0-9.-]+$/.test(host) || !host.includes(".")) return "";
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return "";
   if (isVercelSystemHost(host)) return "";

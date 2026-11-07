@@ -85,6 +85,37 @@ test("handOver creates a missing target directory", () => {
   assert.equal(readFileSync(join(root, "src/lib/og/site.json"), "utf8"), '{"title":"Sky Strike"}');
 });
 
+test("a cross-device refusal removes directories it had to create", () => {
+  const root = makeWorkspace();
+  const staged = join(root, ".grok/site.json.tmp");
+  writeFileSync(staged, '{"title":"Sky Strike"}');
+  const target = join(root, "src/lib/og/site.json");
+  const crossDevice = () => {
+    throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+  };
+
+  assert.throws(() => handOver(staged, target, { rename: crossDevice }), {
+    message: /stage under \/workspace\/\.grok\//,
+  });
+  assert.equal(existsSync(join(root, "src")), false);
+  assert.equal(existsSync(staged), true);
+});
+
+test("a cross-device refusal keeps a directory that already existed", () => {
+  const root = makeWorkspace();
+  const staged = join(root, ".grok/og.jpg.tmp");
+  const target = join(root, "public/og.jpg");
+  writeFileSync(staged, "new card");
+  writeFileSync(target, "old card");
+  const crossDevice = () => {
+    throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+  };
+
+  assert.throws(() => handOver(staged, target, { rename: crossDevice }), /stage under/);
+  assert.equal(readFileSync(target, "utf8"), "old card");
+  assert.equal(existsSync(join(root, "public")), true);
+});
+
 test("an interrupted pass leaves the target on its old bytes, temp-free", () => {
   const root = makeWorkspace();
   const target = join(root, "public/og.jpg");

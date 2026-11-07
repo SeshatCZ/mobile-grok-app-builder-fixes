@@ -17,7 +17,8 @@ import {
   snapshotOgIdentity,
   stripInstallParams,
 } from "./grok-pwa-shared.mjs";
-import { renderInstallPage } from "./grok-pwa-plugin.mjs";
+import { renderInstallPage, installStreamingHeadInjection, normalizeHttpBodyArgs } from "./grok-pwa-plugin.mjs";
+import { hostnameFromHostHeader } from "./grok-pwa-shared.mjs";
 
 const TEMPLATE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -493,6 +494,68 @@ test("rejects hosts that are not plain slugs", () => {
   assert.equal(appNameFromHost("<script>alert(1)</script>"), "Grok App");
   assert.equal(appNameFromHost('"><img src=x onerror=1>.grok.me'), "Grok App");
 });
+
+test("host headers keep IPv6 intact instead of splitting on the first colon", () => {
+  assert.equal(hostnameFromHostHeader("[::1]:8080"), "::1");
+  assert.equal(hostnameFromHostHeader("[::1]"), "::1");
+  assert.equal(hostnameFromHostHeader("wild-race.grok.me:443"), "wild-race.grok.me");
+  assert.equal(hostnameFromHostHeader("wild-race.grok.me, evil.example"), "wild-race.grok.me");
+  assert.equal(publicAppHost("[::1]:8080"), "");
+  assert.equal(publicAppHost("wild-race.grok.me:443"), "wild-race.grok.me");
+  assert.equal(appNameFromHost("[::1]:8080"), "Grok App");
+});
+
+test("res.end(callback) is a callback, not a body", () => {
+  const cb = () => {};
+  assert.deepEqual(normalizeHttpBodyArgs(cb), {
+    chunk: undefined,
+    encoding: undefined,
+    cb,
+  });
+  const buf = Buffer.from("x");
+  assert.deepEqual(normalizeHttpBodyArgs(buf, cb), {
+    chunk: buf,
+    encoding: undefined,
+    cb,
+  });
+});
+
+test("streaming injection accepts res.end(callback) and reports backpressure", () => {
+  const { createHeadInjector } = awaitHead();
+  const writes = [];
+  let backpressure = false;
+  const res = {
+    headersSent: false,
+    getHeader(name) {
+      return name === "content-type" ? "text/html; charset=utf-8" : undefined;
+    },
+    removeHeader() {},
+    write(chunk) {
+      writes.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk);
+      return !backpressure;
+    },
+    end(_chunk, _enc, cb) {
+      if (typeof cb === "function") cb();
+      return this;
+    },
+  };
+  installStreamingHeadInjection(res, createHeadInjector({ appName: "Demo", host: "" }));
+  let ended = false;
+  const html = "<html><head><title>t</title></head><body>Hi</body></html>";
+  backpressure = true;
+  const ok = res.write(html, () => {});
+  assert.equal(ok, false);
+  res.end(() => {
+    ended = true;
+  });
+  assert.equal(ended, true);
+  assert.match(writes.join(""), /<\/head>/);
+  assert.match(writes.join(""), /Hi/);
+});
+
+function awaitHead() {
+  return { createHeadInjector };
+}
 
 test("renders install page markup", () => {
   const html = renderInstallPage("wild-race.grok.me", "/?install=1&platform=ios");

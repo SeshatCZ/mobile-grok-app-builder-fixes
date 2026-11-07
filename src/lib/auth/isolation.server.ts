@@ -30,23 +30,32 @@ export class CrossSiteRequestError extends Error {
   }
 }
 
+/**
+ * True when Fetch Metadata says this is a scripted cross-site (or same-site
+ * sibling) request rather than a top-level document navigation.
+ *
+ * The allowlist is a single shape: `Sec-Fetch-Mode: navigate` + GET +
+ * `Sec-Fetch-Dest: document`. A denylist (`dest !== object && dest !== embed`)
+ * lets an iframe navigation through — and a same-site iframe on `*.grok.me`
+ * still carries the Lax session cookie. Missing `Sec-Fetch-Dest` fails closed
+ * for the same reason: if the browser bothered to send `Sec-Fetch-Site`, a
+ * document navigation would have named its dest.
+ */
+export function isScriptedCrossSiteRequest(headers: Headers, method: string): boolean {
+  const site = headers.get("sec-fetch-site");
+  if (!site || site === "same-origin" || site === "none") return false;
+  const topLevelDocument =
+    headers.get("sec-fetch-mode") === "navigate" &&
+    method === "GET" &&
+    headers.get("sec-fetch-dest") === "document";
+  return !topLevelDocument;
+}
+
 /** Throw `CrossSiteRequestError` for a scripted cross-site/sibling request. */
 export function assertSameSiteRequest(): void {
   const request = getRequest();
   if (!request) return; // no request context (e.g. build) — nothing to guard
-  const h = request.headers;
-  const site = h.get("sec-fetch-site");
-  // Non-browser client (no header), the app's own origin, or a direct
-  // (address-bar/bookmark) load are all fine.
-  if (!site || site === "same-origin" || site === "none") return;
-  // A top-level GET navigation (e.g. the broker's OAuth callback redirect) is
-  // fine even when it's cross-site; scripted requests never set navigate mode.
-  const dest = h.get("sec-fetch-dest");
-  const isTopLevelGet =
-    h.get("sec-fetch-mode") === "navigate" &&
-    request.method === "GET" &&
-    dest !== "object" &&
-    dest !== "embed";
-  if (isTopLevelGet) return;
-  throw new CrossSiteRequestError();
+  if (isScriptedCrossSiteRequest(request.headers, request.method)) {
+    throw new CrossSiteRequestError();
+  }
 }

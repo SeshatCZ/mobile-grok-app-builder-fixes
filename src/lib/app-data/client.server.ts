@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { getRequest } from "@tanstack/react-start/server";
+import { hostnameFromHostHeader } from "../../../scripts/grok-pwa-shared.mjs";
 import {
   assertSameSiteRequest,
   CrossSiteRequestError,
 } from "../auth/isolation.server.ts";
 import { env, isWorkspacePreview } from "../env.server.ts";
 import { assertAppDataServerOnly } from "./server-only.ts";
+import { isTrustedGateLoginUrl } from "./login.ts";
 import {
   CONNECTOR_TOKEN_HEADER,
   CONNECTOR_TOKEN_PENDING_CODE,
@@ -20,8 +22,10 @@ assertAppDataServerOnly("app-data/client.server");
 export const CONNECTORS_HOST_STAGING = "connectors.app-builder-testing.com";
 export const CONNECTORS_HOST_PROD = "connectors.grok.me";
 
-function isLoopbackHost(host: string): boolean {
-  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+export function isLoopbackHost(host: string): boolean {
+  const bare =
+    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  return bare === "localhost" || bare === "127.0.0.1" || bare === "::1";
 }
 
 type InboundContext = {
@@ -58,9 +62,10 @@ function tryGetRequest(): Request | null {
 
 function inboundContext(): InboundContext {
   const req = tryGetRequest();
-  const xf = req?.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   const publicHost =
-    (xf || req?.headers.get("host") || "").split(":")[0]?.trim() || null;
+    hostnameFromHostHeader(
+      req?.headers.get("x-forwarded-host") || req?.headers.get("host") || "",
+    ) || null;
   const headerToken = req?.headers.get(CONNECTOR_TOKEN_HEADER)?.trim() || null;
   const envToken =
     process.env.NODE_ENV === "production"
@@ -229,11 +234,12 @@ function unauthorizedResult(
     noteTokenRejected(token);
     return pendingTokenResult(PENDING_TOKEN_REJECTED);
   }
-  const loginUrl =
-    gateSigninUrl(ctx) ??
-    (typeof json.loginUrl === "string" && json.loginUrl
-      ? json.loginUrl
-      : undefined);
+  const fromGate = gateSigninUrl(ctx);
+  const fromJson = typeof json.loginUrl === "string" ? json.loginUrl : undefined;
+  const loginUrl = [fromGate, fromJson].find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && isTrustedGateLoginUrl(candidate),
+  );
   return {
     ok: false,
     data: null,

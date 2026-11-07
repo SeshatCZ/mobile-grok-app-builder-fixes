@@ -96,6 +96,13 @@ export function compareToBaseline(current, baseline) {
       }
     }
   }
+  // A viewport that vanished is not "unchanged" — iterating only the current
+  // side would let a mobile crash (no entry at all) pass as identical.
+  for (const name of Object.keys(baseViewports)) {
+    if (!Object.prototype.hasOwnProperty.call(current.viewports, name)) {
+      reasons.push(`${name}: viewport disappeared from the current verdict`);
+    }
+  }
   return { divergesFromBaseline: reasons.length > 0, reasons };
 }
 export function baselineComparison(current, rawText) {
